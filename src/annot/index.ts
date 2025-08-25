@@ -16,6 +16,7 @@ import { FreeTextParser } from './parse_freetext'
 import { StampParser } from './parse_stamp'
 import { LineParser } from './parse_line'
 import { PolylineParser } from './parse_polyline'
+import { ActualPolylineParser } from './parse_actual_polyline'
 import { t } from 'i18next'
 
 // import { HighlightParser } from './parse_highlight' // future
@@ -47,7 +48,20 @@ const parserMap: {
  * @param pdfDoc - 当前正在编辑的 PDF 文档实例
  */
 async function parseAnnotationToPdf(annotation: IAnnotationStore, page: PDFPage, pdfDoc: PDFDocument): Promise<void> {
-    const ParserClass = parserMap[annotation.pdfjsType]
+    let ParserClass = parserMap[annotation.pdfjsType]
+    // Allow both polyline parsers; choose based on konva structure
+    if (annotation.pdfjsType === PdfjsAnnotationType.POLYLINE) {
+        try {
+            const konvaGroup = JSON.parse(annotation.konvaString)
+            const children = Array.isArray(konvaGroup?.children) ? konvaGroup.children : []
+            const hasPath = children.some((c: any) => c.className === 'Path')
+            // Default to Path-based Polyline; if no Path nodes exist, use Line-based parser
+            ParserClass = hasPath ? PolylineParser : ActualPolylineParser
+        } catch {
+            // If parsing fails, default to PolylineParser (previously working logic)
+            ParserClass = PolylineParser
+        }
+    }
     if (ParserClass) {
         const parser = new ParserClass(pdfDoc, page, annotation)
         await parser.parse()
@@ -92,7 +106,7 @@ function clearAllAnnotations(pdfDoc: PDFDocument) {
 }
 
 // 动态加载字体文件，返回 ArrayBuffer
-async function loadFontBuffer(url: string): Promise<ArrayBuffer> {
+export async function loadFontBuffer(url: string): Promise<ArrayBuffer> {
     const response = await fetch(url)
     if (!response.ok) throw new Error(`Failed to load font at ${url}`)
     return await response.arrayBuffer()
